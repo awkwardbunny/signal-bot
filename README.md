@@ -15,6 +15,8 @@ Some linux packages are necessary to run some of the commands:
 
 Install python dependencies: `$ pip install -r requirements.txt` you can just run `$ python3 ./bot.py`
 
+See "Details" section to see how to interact with it.
+
 # Docker
 The dockerfile is provided.  
 Take a look to see how it needs to be set up.
@@ -52,6 +54,9 @@ If the user is admin, there are some extra commands available to them:
 * `!msg [receipient] [message]` - sends message to another account
 * `!users` - lists registered users
 * `!mkadmin [number of another user]` - makes another account admin
+
+Any messages starting with two exclamation marks `!!` will be ignored.  
+Also, messages without the `!` prefix will be ignored in a group chat.
 
 # Notes
 Written kinda hastly bc excited to see it work. Need to rewrite much more nicely.  
