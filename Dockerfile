@@ -1,7 +1,7 @@
 #FROM python:3-bullseye
-#FROM openjdk:slim
-#COPY --from=python:3-bullseye / /
-FROM brian/java-python
+FROM openjdk:slim
+COPY --from=python:3-bullseye / /
+#FROM brian/java-python
 
 # Install signal-cli
 ARG SIGNAL_CLI_VERSION=0.8.5
