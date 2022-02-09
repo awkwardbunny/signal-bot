@@ -58,6 +58,21 @@ If the user is admin, there are some extra commands available to them:
 Any messages starting with two exclamation marks `!!` will be ignored.  
 Also, messages without the `!` prefix will be ignored in a group chat.
 
+# Wordle
+The '!wordle' command will let you play wordle.
+The only requirement is to place a file into the wordle config directory that's automatically created and then restart.
+It should look something like:
+```bash
+cp wordle-answers <data mount point>/wordle/answers
+```
+
+The answers file contains a word per line for each day since 06/19/2021 (June 19th, 2021)
+This list can be found by looking at the javascript source for the original game.
+For a custom list of words, just replace the file with your own.
+
+Rest of the guess words will be downloaded from the web.
+
+
 # Notes
 Written kinda hastly bc excited to see it work. Need to rewrite much more nicely.  
 I wanna add a `!bf [program]` command that interprets brainfuck.  

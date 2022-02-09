@@ -4,17 +4,146 @@ import time
 import logging
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
-from enum import Enum
 from subprocess import STDOUT, check_output, Popen, PIPE, CalledProcessError
+import urllib.request
+import os
+from datetime import date
+from typing import List
+
+
+class Blocks:
+    BLACK = u'\u2b1b'
+    EMPTY = u'\u2b1c'
+    YELLOW = u'\U0001f7e8'
+    GREEN = u'\U0001f7e9'
+
+
+class Wordle:
+
+    def __init__(self, config: str):
+        self.logger = logging.getLogger("Wordle")
+
+        self.config_dir = config
+        if not os.path.exists(config):
+            os.mkdir(config)
+            self.logger.info(f"Creating wordle config dir: {config}")
+
+        if not os.path.exists(config+"/wordlist"):
+            self.logger.info(f"Fetching wordlist")
+            guesslist = "https://gist.githubusercontent.com/cfreshman/cdcdf777450c5b5301e439061d29694c/raw/de1df631b45492e0974f7affe266ec36fed736eb/wordle-allowed-guesses.txt"
+            with open(config+"/wordlist", 'w') as wordlist:
+                for line in urllib.request.urlopen(guesslist):
+                    wordlist.write(line.decode('utf-8'))
+
+        self.logger.info("Loading wordlist")
+        self.wordlist = []
+        with open(config+"/answers", 'r') as answers:
+            self.wordlist = [l.strip() for l in answers]
+
+        with open(config+"/wordlist", 'r') as wordlist:
+            self.wordlist += [l.strip() for l in wordlist]
+
+    def getTodayDir(self) -> str:
+        path = f"{self.config_dir}/{date.today()}"
+        if not os.path.exists(path):
+            os.mkdir(path)
+            self.logger.info(f"Creating directory for today: {date.today()}")
+        return path
+
+    def getWotd(self) -> str:
+        num = (date.today() - date(2021, 6, 19)).days
+        # self.logger.info(f"Today is {date.today()}: #{num}")
+        return self.wordlist[num]
+
+    def getUserData(self, user: str) -> List[str]:
+        path = f"{self.getTodayDir()}/{user}"
+        if not os.path.exists(path):
+            return []
+        with open(path, 'r') as f:
+            return [g.strip() for g in f if len(g.strip()) > 0]
+
+    def setUserData(self, user: str, guesses: List[str]):
+        path = f"{self.getTodayDir()}/{user}"
+        with open(path, 'w') as f:
+            for g in guesses:
+                f.write(g + '\n')
+
+    def guessWord(self, user: str, word: str, update: bool = True) -> (str, str):
+        word = word.lower()
+
+        if len(word) != 5:
+            return None, "Wordle guesses must be 5 letters wrong"
+
+        if word not in self.wordlist:
+            return None, f"Word \"{word}\" is not a valid word in wordle"
+
+        wotd = self.getWotd()
+        guesses = self.getUserData(user)
+
+        res = ""
+        for e, a in zip(wotd, word):
+            if e == a:
+                res += Blocks.GREEN
+            elif a in wotd:
+                res += Blocks.YELLOW
+            else:
+                res += Blocks.BLACK
+
+        if update:
+            if word in guesses:
+                res = f"Word \"{word}\" already guessed\n" + res
+            else:
+                guesses.append(word)
+                self.setUserData(user, guesses)
+
+        return res, None
+
+    def getBoard(self, user: str) -> str:
+        guesses = self.getUserData(user)
+
+        fin = len(guesses) == 6
+        res = ""
+        for i in range(6):
+            if i < len(guesses):
+                r, _ = self.guessWord(user, guesses[i], False)
+                res += r
+                if guesses[i] == self.getWotd():
+                    fin = True
+                    break
+            else:
+                res += Blocks.EMPTY*5
+            res += "\n"
+
+        num = (date.today() - date(2021, 6, 19)).days
+        status = f"Wordle {num} {len(guesses)}/6"
+        if not fin and len(guesses) < 6:
+            status = self.getInstruction() + "\n" + status
+
+        return status + "\n\n" + res
+
+    def getInstruction(self) -> str:
+        return f"""Welcome to Wordle!
+{Blocks.BLACK}: Wrong guess
+{Blocks.GREEN}: Correct guess
+{Blocks.YELLOW}: Incorrect position
+{Blocks.EMPTY}: No guesses yet
+
+Use '!wordle [guess]' enter a guess
+Use '!wordle' to see this message
+Use '!wordle -g' to see your guesses
+
+"""
+
 
 class SignalBot:
 
     DATA_BASE_DIR = "/signal-data"
     USERS_FILE = DATA_BASE_DIR + "/users"
+    WORDLE_DIR = DATA_BASE_DIR + "/wordle"
 
     def __init__(self):
         self.logger = logging.getLogger("SignalBot")
-        self.logger.info(" == Brian's Signal Bot v0.4 == ")
+        self.logger.info(" == Brian's Signal Bot v0.5 == ")
 
         # Set up some things while DBus is initializing
         self.commands = {
@@ -24,6 +153,7 @@ class SignalBot:
                 "echo"     : (self.echoHandler,     "Echos sent message back"),
                 "register" : (self.registerHandler, "Register user"),
                 "fortune"  : (self.fortuneHandler,  "Want a fortune?"),
+                "wordle"   : (self.wordleHandler,   "Play wordle"),
                 }
         adminCmdOnly = {
                 "mkadmin"  : (self.mkadminHandler,  "*Make user admin"),
@@ -35,6 +165,7 @@ class SignalBot:
         self.adminCmd = self.commands.copy()
         self.adminCmd.update(adminCmdOnly)
 
+        self.users = {}
         self.loadUsers()
 
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
@@ -51,6 +182,9 @@ class SignalBot:
                 time.sleep(1)
 
         self.logger.info("Using signal-cli version %s", str(self.signal_bus.version()))
+
+        self.wordle = Wordle(self.WORDLE_DIR)
+
         self.connectHandlers()
 
     def loadUsers(self):
@@ -173,7 +307,6 @@ class SignalBot:
                 self.addUser(name, sender)
                 self.sendMessage("You are now {}.".format(name), sender, group)
 
-
     def shHandler(self, msg, sender, group):
         if "/signal-data" in msg:
             self.sendMessage("Restricted command :P", sender, group)
@@ -208,11 +341,45 @@ class SignalBot:
 
     def msgHandler(self, msg, sender, group):
         s = msg[4:].split()
+        if len(s) < 2:
+            self.sendMessage("Usage: !msg [number] [message to send]", sender, group)
+            return
         dest = s[0]
         msg = s[1:]
         name = self.users[sender][0]
-        #TODO Input checking for missing params
         self.sendMessage(f"Sent on behalf of {sender} ({name}):\n====================================\n{' '.join(msg)}", dest, [])
+
+    def wordleHandler(self, msg, sender, group):
+        s = msg.split()
+        if len(s) < 2:
+            if len(group) == 0:
+                self.sendMessage(self.wordle.getBoard(sender), sender, group)
+            else:
+                try:
+                    msg = f"For user '{self.users[sender][0]}':"
+                except KeyError:
+                    msg = f"For user 'unknown' ({sender}):"
+                msg += "\n" + self.wordle.getBoard(sender)
+                self.sendMessage(msg, sender, group)
+        else:
+            if s[1] == "-g":
+                if len(group) != 0:
+                    self.sendMessage("Cannot show guesses in group chats", sender, group)
+                    return
+
+                g = self.wordle.getUserData(sender)
+                if len(g) == 0:
+                    msg = "You have no guesses yet"
+                else:
+                    x = [self.wordle.guessWord(sender, c, False)[0] + " " + c for c in g]
+                    num = (date.today() - date(2021, 6, 19)).days
+                    msg = f"Your guesses for {num}:"
+                    msg += "\n" + '\n'.join(x)
+                self.sendMessage(msg, sender, group)
+            else:
+                res, error = self.wordle.guessWord(sender, s[1])
+                self.sendMessage(res if error is None else error, sender, group)
+
 
 if __name__ == '__main__':
 
@@ -231,6 +398,11 @@ if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
     logger.addHandler(console)
     logger.addHandler(logfile)
+
+    wlogger = logging.getLogger("Wordle")
+    wlogger.setLevel(logging.DEBUG)
+    wlogger.addHandler(console)
+    wlogger.addHandler(logfile)
         
     bot = SignalBot()
     bot.start()
